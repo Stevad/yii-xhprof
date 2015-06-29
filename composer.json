@@ -1,0 +1,21 @@
+{
+    "name": "stevad/yii-xhprof",
+    "description": "Yii extension to profile application with XHProf",
+    "keywords": ["yii", "extension", "profiling", "debug"],
+    "homepage": "https://github.com/stevad/yii-xhprof",
+    "type": "yii-extension",
+    "license": "BSD-3-Clause",
+    "require": {
+        "php": ">=5.1.0",
+        "ext-xhprof": "*",
+        "yiisoft/yii": "1.1.x",
+        "zhuravljov/yii2-debug": "*"
+    },
+    "authors": [
+        {
+            "name": "Stepanov Vadim",
+            "email": "vadim.stepanov.ua@gmail.com"
+        }
+    ],
+    "minimum-stability": "dev"
+}
