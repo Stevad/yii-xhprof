@@ -1,21 +1,68 @@
 <?php
 /* @var XHProfPanel $this */
-/* @var string[] $urls */
-/* @var string[] $diffs */
+/* @var array $urls */
+/* @var array $reports */
+/* @var array $run */
+/* @var bool $enabled */
 ?>
-<h3>Reports:</h3>
-<ul>
-	<li><a href="<?php echo $urls['report'] ?>" target="_blank">Detailed report</a></li>
-	<li><a href="<?php echo $urls['callgraph'] ?>" target="_blank">Callgraph</a></li>
-</ul>
+<h3>XHProf Reports</h3>
 
-<h4>Diff with one of the last runs:</h4>
-<ul>
-<?php if (count($diffs) > 0): ?>
-	<?php foreach ($diffs as $runId => $info): ?>
-	<li>[<?php echo date('Y-m-d H:i:s', $info['time']) ?>] <a href="<?php echo $info['compareUrl'] ?>" target="_blank">Run #<?php echo $runId ?></a> (<?php echo $info['url'] ?>)</li>
-	<?php endforeach; ?>
+<h4>Current profiler run:</h4>
+<?php if ($enabled): ?>
+    <ul>
+        <li><a href="<?php echo $urls['report'] ?>" target="_blank">Detailed report</a></li>
+        <li><a href="<?php echo $urls['callgraph'] ?>" target="_blank">Callgraph</a></li>
+    </ul>
 <?php else: ?>
-	<li>There is no any other runs yet.</li>
+    <p>XHProf was not used for this request.</p>
 <?php endif; ?>
-</ul>
+
+<h4>Previous runs (<?php echo Yii::app()->xhprof->maxReportsCount ?> items max):</h4>
+<p>You can open report, callgraph or diff with current run for any of the previous profiler runs. Also you can compare
+    any previous runs between themselves (check radios and click on button "Compare selected").</p>
+
+<table class="table table-condensed table-bordered table-striped table-hover" style="table-layout:fixed">
+    <thead>
+    <tr>
+        <th style="width: 25px;">#</th>
+        <th colspan="2" style="width: 70px;">Compare</th>
+        <th>Request</th>
+        <th style="width:180px">Date and Time</th>
+        <th style="width:60px">Actions</th>
+    </tr>
+    </thead>
+    <tbody>
+    <?php foreach ($reports as $i => $report): ?>
+        <tr>
+            <td><?php echo $i + 1 ?></td>
+            <td>
+                <?php if ($run['id'] !== $report['runId']): ?>
+                    <input type="radio" name="xhprof[id1]" value="<?php echo $report['runId'] ?>"
+                           data-ns="<?php echo $report['ns'] ?>" data-type="1">
+                <?php endif; ?>
+            </td>
+            <td>
+                <?php if ($run['id'] !== $report['runId']): ?>
+                    <input type="radio" name="xhprof[id2]" value="<?php echo $report['runId'] ?>"
+                           data-ns="<?php echo $report['ns'] ?>" data-type="2">
+                <?php endif; ?>
+            </td>
+            <td><?php echo CHtml::encode($report['url']); ?></td>
+            <td><?php echo date('Y-m-d H:i:s', $report['time']) ?>.<?php echo substr((string)($report['time'] - floor($report['time'])), 2, 3) ?></td>
+            <td style="text-align: center;">
+                <a href="#" class="xhprof-report" title="View report" data-id="<?php echo $report['runId'] ?>"
+                   data-ns="<?php echo $report['ns'] ?>" target="_blank"><i class="icon-file"></i></a>
+                <a href="#" class="xhprof-callgraph" title="View callgraph" data-id="<?php echo $report['runId'] ?>"
+                   data-ns="<?php echo $report['ns'] ?>" target="_blank"><i class="icon-retweet"></i></a>
+                <?php if ($run['id'] !== $report['runId'] && $enabled): ?>
+                    <a href="#" class="xhprof-diff" title="Compare with this run"
+                       data-id="<?php echo $report['runId'] ?>" data-id2="<?php echo $run['id'] ?>"
+                       data-ns="<?php echo $run['ns'] ?>" target="_blank"><i class="icon-share-alt"></i></a>
+                <?php endif; ?>
+            </td>
+        </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+
+<button class="btn disabled xhprof-compare">Compare selected</button>

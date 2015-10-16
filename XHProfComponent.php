@@ -2,155 +2,186 @@
 
 /**
  * XHProf application component for Yii Framework 1.x.
- * Uses original XHProf UI to show reports. 
- * Developed to use with Yii2Debug extension (https://github.com/zhuravljov/yii2-debug)
+ * Uses original XHProf UI to display results.
+ *
+ * Designed to profile application from onBeforeRequest to onEndRequest events. You can also manually start and stop
+ * profiler in any place of your code. By default component save last 25 reports. You can see then in bundled debug
+ * panel for Yii2Debug extension (https://github.com/zhuravljov/yii2-debug). All other reports are available by default
+ * in XHProf UI (e.g. http://some.path.to/xhprof_html)
  *
  * @author Vadym Stepanov <vadim.stepanov.ua@gmail.com>
  */
 class XHProfComponent extends CApplicationComponent
 {
     /**
-     * Path to store last reports
-     * @var string
-     */
-    public $reportPath;
-    /**
-     * How many reports store in history file
-     * @var integer
-     */
-    public $maxReportsCount = 50;
-    /**
      * Enable/disable component in Yii
-     * @var boolean
+     * @var bool
      */
     public $enabled = true;
+
     /**
-     * If set trigger xhprof to make profiling only if user set specified GET param with any value
+     * Path alias to directory with reports file
      * @var string
      */
-    public $triggerGetParam = 'xhprof';
+    public $reportPathAlias = 'application.runtime.xhprof';
+
     /**
-     * Path alias to xhprof_lib directory (for proper work it must be inside webroot on the same level with xhprof_html)
+     * How many reports to store in history file
+     * @var integer
+     */
+    public $maxReportsCount = 25;
+
+    /**
+     * Set true to manually create instance of XHProf object and start profiling. Disabled by default, profile
+     * is started on 'onBeginRequest' event
+     * @var bool
+     */
+    public $manualStart = false;
+
+    /**
+     * Set true to manually stop profiling. Disabled by default, profile is stopped on 'onEndRequest' event.
+     * @var bool
+     */
+    public $manualStop = false;
+
+    /**
+     * Force terminate profile process on 'onEndRequest' event if it is still running with enabled manual stop
+     * @var bool
+     */
+    public $forceStop = true;
+
+    /**
+     * Set value to trigger profiling only by specified GET param with any value
      * @var string
      */
-    public $xhprofLibPathAlias = 'webroot.xhprof_lib';
+    public $triggerGetParam;
+
     /**
-     * Path alias to xhprof_html directory (for proper work it must be inside webroot and to be accessible to view reports)
+     * If this component is used without yii2-debug extension, set true to show overlay with links to report and
+     * callgraph. Otherwise, set false and add panel to yii2-debug (see readme for more details).
+     * @var bool
+     */
+    public $showOverlay = true;
+
+    /**
+     * Path alias to the 'xhprof_lib' directory. If not set, value of $libPath will be used instead
      * @var string
      */
-    public $xhprofHtmlPath = 'webroot.xhprof_html';
+    public $libPathAlias;
+
     /**
-     * Use or not flag XHPROF_FLAGS_NO_BUILTINS (http://php.net/manual/ru/xhprof.constants.php)
-     * @var boolean
+     * Direct filesystem path to the 'xhprof_lib' directory
+     * @var string
+     */
+    public $libPath;
+
+    /**
+     * URL path to XHProf html reporting files without leading slash
+     * @var string
+     */
+    public $htmlReportBaseUrl = '/xhprof_html';
+
+    /**
+     * Enable/disable flag XHPROF_FLAGS_NO_BUILTINS (see http://php.net/manual/ru/xhprof.constants.php)
+     * @var bool
      */
     public $flagNoBuiltins = true;
+
     /**
-     * Use or not flag XHPROF_FLAGS_CPU (http://php.net/manual/ru/xhprof.constants.php)
+     * Enable/disable flag XHPROF_FLAGS_CPU (see http://php.net/manual/ru/xhprof.constants.php)
      * Default: false. Reason - some overhead in calculation on linux OS
-     * @var boolean
+     * @var bool
      */
     public $flagCpu = false;
+
     /**
-     * Use or not flag XHPROF_FLAGS_MEMORY (http://php.net/manual/ru/xhprof.constants.php)
-     * @var boolean
+     * Enable/disable flag XHPROF_FLAGS_MEMORY (see http://php.net/manual/ru/xhprof.constants.php)
+     * @var bool
      */
     public $flagMemory = true;
+
     /**
      * List of routes to not run xhprof on.
      * @var array
      */
-    public $blacklistedRoutes = ['debug/*'];
-    /**
-     * Current run identifier
-     * @var string
-     */
-    private $_runId;
+    public $blacklistedRoutes = array('debug*');
+
     /**
      * Current report details
      * @var array
      */
-    private $_reportInfo;
+    private $reportInfo;
+
     /**
-     * Flag to show if xhprof started or not.
-     * @var boolean
+     * Path to the temporary directory with reports
+     * @var string
      */
-    private $_isActive = false;
+    private $reportSavePath;
 
-
+    /**
+     * Initialize component and check path to xhprof library files. Start profiling and add overlay (if allowed
+     * by configuration).
+     * @throws CException
+     */
     public function init()
     {
         parent::init();
 
-        if (!$this->enabled) {
+        Yii::setPathOfAlias('yii-xhprof', __DIR__);
+        Yii::app()->setImport(array('yii-xhprof.*'));
+
+        if (!$this->enabled
+            || ($this->triggerGetParam !== null && Yii::app()->request->getQuery($this->triggerGetParam) === null)
+            || $this->isRouteBlacklisted()
+        ) {
             return;
         }
 
-        if ($this->triggerGetParam !== null && Yii::app()->request->getQuery($this->triggerGetParam) === null) {
-            return;
+        if (empty($this->libPath) && empty($this->libPathAlias)) {
+            throw new CException('Both libPath and libPathAlias cannot be empty. Provide at least one of the value');
         }
 
-        if (!extension_loaded('xhprof')) {
-            throw new CException('XHProf extension is not available');
+        if (!$this->manualStart) {
+            Yii::app()->attachEventHandler('onBeginRequest', array($this, 'beginProfiling'));
         }
 
-        Yii::setPathOfAlias('yii-xhprof', dirname(__FILE__));
-        Yii::app()->setImport(array(
-            'yii-xhprof.*'
-        ));
-
-        if ($this->reportPath === null) {
-            $this->reportPath = Yii::app()->getRuntimePath() . '/xhprof';
+        if ($this->showOverlay && !Yii::app()->request->isAjaxRequest) {
+            $this->initOverlay();
+            Yii::app()->attachEventHandler('onEndRequest', array($this, 'appendResultsOverlay'));
         }
 
-        $path = $this->reportPath;
-        if (!is_dir($path)) {
-            mkdir($path);
-        }
-
-        if ($this->isBlacklistedRoute()) {
-            return;
-        }
-
-        Yii::app()->attachEventHandler('onBeginRequest', array($this, 'beginProfiling'));
         Yii::app()->attachEventHandler('onEndRequest', array($this, 'stopProfiling'));
     }
 
     /**
-     * Get if xhprof profiler is currently active or not
-     * @return boolean
+     * Get if component enabled and xhprof profiler is currently started
+     * @return bool
      */
     public function isActive()
     {
-        return $this->_isActive;
+        return $this->enabled && XHProf::getInstance()->isStarted();
     }
 
     /**
-     * Get unique run identifier for active profiler
-     * @return string
-     */
-    public function getRunId()
-    {
-        if (!$this->isActive()) {
-            return null;
-        }
-        if ($this->_runId === null) {
-            $this->_runId = uniqid();
-        }
-        return $this->_runId;
-    }
-
-    /**
-     * Get flags and start profiling
+     * Configure XHProf instance and start profiling
      */
     public function beginProfiling()
     {
-        $flags = $this->getFlags();
-        if ($flags !== 0) {
-            xhprof_enable($flags);
-        } else {
-            xhprof_enable();
+        $libPath = $this->libPath;
+        if (!empty($this->libPathAlias)) {
+            $libPath = Yii::getPathOfAlias($this->libPathAlias);
         }
-        $this->_isActive = true;
+
+        XHProf::getInstance()->configure(array(
+            'flagNoBuiltins' => $this->flagNoBuiltins,
+            'flagCpu' => $this->flagCpu,
+            'flagMemory' => $this->flagMemory,
+            'runNamespace' => Yii::app()->id,
+            'libPath' => $libPath,
+            'htmlUrlPath' => $this->getReportBaseUrl()
+        ));
+
+        XHProf::getInstance()->run();
     }
 
     /**
@@ -158,24 +189,73 @@ class XHProfComponent extends CApplicationComponent
      */
     public function stopProfiling()
     {
-        $runId = $this->getRunId();
-        $runNamespace = Yii::app()->id;
+        $XHProf = XHProf::getInstance();
 
-        $xhprofData = xhprof_disable();
-        $libPath = Yii::getPathOfAlias($this->xhprofLibPathAlias);
-        include_once($libPath . '/utils/xhprof_lib.php');
-        include_once($libPath . '/utils/xhprof_runs.php');
+        if ($XHProf->isStarted() && $XHProf->getStatus() === XHProf::STATUS_RUNNING
+            && (!$this->manualStop || ($this->manualStop && $this->forceStop))
+        ) {
+            $XHProf->stop();
+        }
 
-        $xhprof = new XHProfRuns_Default();
-        $xhprof->save_run($xhprofData, $runNamespace, $runId);
+        if ($this->isActive()) {
+            $this->saveReport();
+        }
+    }
 
-        $this->saveReport();
+    /**
+     * Add code to display own overlay with links to report and callgraph for current profile run
+     */
+    public function appendResultsOverlay()
+    {
+        $XHProf = XHProf::getInstance();
+        if (!$XHProf->isStarted()) {
+            return;
+        }
+
+        $data = $this->getReportInfo();
+        $reportUrl = $XHProf->getReportUrl($data['runId'], $data['ns']);
+        $callgraphUrl = $XHProf->getCallgraphUrl($data['runId'], $data['ns']);
+
+        // write direct HTML because we cannot use clientScript
+        echo <<<EOD
+<script type="text/javascript">
+(function() {
+    var overlay = document.createElement('div');
+    overlay.setAttribute('id', 'xhprof-overlay');
+    overlay.innerHTML = '<div class="xhprof-header">XHProf</div><a href="{$reportUrl}" target="_blank">Report</a><a href="{$callgraphUrl}" target="_blank">Callgraph</a>';
+    document.getElementsByTagName('body')[0].appendChild(overlay);
+})();
+</script>
+EOD;
+    }
+
+    /**
+     * Get reports save path
+     * @return string
+     */
+    public function getReportSavePath()
+    {
+        if ($this->reportSavePath === null) {
+            if ($this->reportPathAlias === null) {
+                $path = Yii::app()->getRuntimePath() . '/xhprof';
+            } else {
+                $path = Yii::getPathOfAlias($this->reportPathAlias);
+            }
+
+            if (!is_dir($path)) {
+                mkdir($path);
+            }
+
+            $this->reportSavePath = $path;
+        }
+
+        return $this->reportSavePath;
     }
 
     /**
      * Get report details for current profiling process. Info consists of:
      * - unique run identifier (runId)
-     * - namespace for run (ns, by default equal to current application ID)
+     * - namespace for run (ns, current application ID by default)
      * - requested URL (url)
      * - time of request (time)
      * @return array key-valued list
@@ -183,144 +263,77 @@ class XHProfComponent extends CApplicationComponent
     public function getReportInfo()
     {
         if (!$this->isActive()) {
-            return null;
+            return array(
+                'enabled' => false,
+                'runId' => null,
+                'ns' => null,
+                'url' => null,
+                'time' => null
+            );
         }
-        if ($this->_reportInfo === null) {
+
+        if ($this->reportInfo === null) {
             $request = Yii::app()->getRequest();
-            $this->_reportInfo = array(
-                'runId' => $this->getRunId(),
-                'ns' => Yii::app()->id,
+            $this->reportInfo = array(
+                'enabled' => true,
+                'runId' => XHProf::getInstance()->getRunId(),
+                'ns' => XHProf::getInstance()->getRunNamespace(),
                 'url' => $request->getHostInfo() . $request->getUrl(),
-                'time' => time()
-            );
-        }
-        return $this->_reportInfo;
-    }
-
-    /**
-     * Get url's to view detailed report and callgraph in XHProf UI.
-     * @param  array $report xhprof report by this component
-     * @return array list with url's (keys: report, callgraph)
-     */
-    public function createReportUrls($report)
-    {
-        $baseUrl = $this->getHtmlUrl();
-        return [
-            'report' => $baseUrl . "/index.php?run={$report['runId']}&source={$report['ns']}",
-            'callgraph' => $baseUrl . "/callgraph.php?run={$report['runId']}&source={$report['ns']}"
-        ];
-    }
-
-    /**
-     * Create information to see diff of current report and any other in history.
-     * @param  array $currentReport report by this component
-     * @return array key-valued list. Key is the run ID and value is the list with information:
-     * - url to see diff report (compareUrl)
-     * - user request url of history entry (url)
-     * - time of the request (time)
-     */
-    public function createDiffData($currentReport)
-    {
-        $reports = $this->loadReports();
-        $compareUrls = [];
-        $baseUrl = $this->getHtmlUrl();
-
-        $reports = array_reverse($reports);
-        foreach ($reports as $report) {
-            if ($currentReport['runId'] === $report['runId'] || $currentReport['ns'] !== $report['ns']) {
-                continue;
-            }
-            $compareUrls[$report['runId']] = array(
-                'compareUrl' => $baseUrl . "/index.php?run1={$currentReport['runId']}&run2={$report['runId']}&source={$currentReport['ns']}",
-                'url' => $report['url'],
-                'time' => $report['time']
+                'time' => microtime(true)
             );
         }
 
-        return $compareUrls;
+        return $this->reportInfo;
     }
 
     /**
-     * Check if current route is blacklisted
-     * @return boolean
-     */
-    private function isBlacklistedRoute()
-    {
-        $result = false;
-        if (count($this->blacklistedRoutes) === 0) {
-            return $result;
-        }
-
-        $route = Yii::app()->getUrlManager()->parseUrl(Yii::app()->getRequest());
-        foreach ($this->blacklistedRoutes as $r) {
-            if ($r[strlen($r) - 1] === '*') {
-                $r = substr($r, 0, -1);
-                if (strpos($route, $r) === 0) {
-                    $result = true;
-                    break;
-                }
-            } elseif ($route === $r) {
-                $result = true;
-                break;
-            }
-        }
-
-        return $result;
-    }
-
-    /**
-     * Get URL to xhprof_html directory
+     * Get base URL part to the XHProf UI
      * @return string
      */
-    private function getHtmlUrl()
+    public function getReportBaseUrl()
     {
-        $webRoot = Yii::getPathOfAlias('webroot');
-        $htmlPath = Yii::getPathOfAlias($this->xhprofHtmlPath);
-
-        if (($pos = strpos($htmlPath, $webRoot)) !== 0) {
-            throw new CException('XHProf UI is not on the same server with site');
+        if (strpos($this->htmlReportBaseUrl, '://') === false) {
+            return Yii::app()->getRequest()->getBaseUrl(true) . $this->htmlReportBaseUrl;
         }
 
-        $request = Yii::app()->request;
-        $baseUrl = substr($htmlPath, strlen($webRoot));
-        $baseUrl = $request->getHostInfo() . $request->getBaseUrl() . $baseUrl;
-
-        return $baseUrl;
-    }
-
-    /**
-     * Calculate flags for xhprof_enable function
-     * @return int
-     */
-    private function getFlags()
-    {
-        $flags = 0;
-        if ($this->flagNoBuiltins) {
-            $flags += XHPROF_FLAGS_NO_BUILTINS;
-        }
-        if ($this->flagCpu) {
-            $flags += XHPROF_FLAGS_CPU;
-        }
-        if ($this->flagMemory) {
-            $flags += XHPROF_FLAGS_MEMORY;
-        }
-
-        return $flags;
+        return $this->htmlReportBaseUrl;
     }
 
     /**
      * Load list of previous reports from JSON file
      * @return array
      */
-    private function loadReports()
+    public function loadReports()
     {
-        $reportsFile = "{$this->reportPath}/reports.json";
+        $reportsFile = "{$this->getReportSavePath()}/reports.json";
         $reports = array();
+
         if (is_file($reportsFile)) {
             $reports = CJSON::decode(file_get_contents($reportsFile));
         }
 
         return $reports;
+    }
+
+    /**
+     * Check if current route is blacklisted (should not be processed)
+     * @return bool
+     */
+    private function isRouteBlacklisted()
+    {
+        $result = false;
+        $routes = $this->blacklistedRoutes;
+        $requestRoute = Yii::app()->getUrlManager()->parseUrl(Yii::app()->getRequest());
+
+        foreach ($routes as $route) {
+            $route = str_replace('*', '([a-zA-Z0-9\/\-\._]{0,})', str_replace('/', '\/', '^' . $route));
+            if (preg_match("/{$route}/", $requestRoute) !== 0) {
+                $result = true;
+                break;
+            }
+        }
+
+        return $result;
     }
 
     /**
@@ -332,10 +345,19 @@ class XHProfComponent extends CApplicationComponent
         $reports[] = $this->getReportInfo();
 
         if (count($reports) > $this->maxReportsCount) {
-            $deletedItem = array_shift($reports);
+            array_shift($reports);
         }
 
-        $reportsFile = "{$this->reportPath}/reports.json";
+        $reportsFile = "{$this->getReportSavePath()}/reports.json";
         file_put_contents($reportsFile, CJSON::encode($reports));
+    }
+
+    /**
+     * Register asset files for overlay
+     */
+    private function initOverlay()
+    {
+        $assetPath = Yii::app()->assetManager->publish(__DIR__ . '/assets', false, -1, true);
+        Yii::app()->clientScript->registerCssFile($assetPath . '/xhprof.css');
     }
 }
