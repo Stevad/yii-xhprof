@@ -34,7 +34,7 @@ XHProf.urlCallgraphTemplate = '{$urlTemplates['callgraph']}';
 XHProf.urlDiffTemplate = '{$urlTemplates['diff']}';
 EOD;
 
-        $assetPath = Yii::app()->assetManager->publish(__DIR__ . '/assets', false, -1, true);
+        $assetPath = Yii::app()->assetManager->publish(__DIR__ . '/assets');
         /** @var CClientScript $cs */
         $cs = Yii::app()->clientScript;
         $cs->registerScriptFile($assetPath . '/xhprof.js', CClientScript::POS_HEAD);

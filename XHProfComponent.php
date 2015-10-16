@@ -357,7 +357,7 @@ EOD;
      */
     private function initOverlay()
     {
-        $assetPath = Yii::app()->assetManager->publish(__DIR__ . '/assets', false, -1, true);
+        $assetPath = Yii::app()->assetManager->publish(__DIR__ . '/assets');
         Yii::app()->clientScript->registerCssFile($assetPath . '/xhprof.css');
     }
 }

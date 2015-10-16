@@ -108,7 +108,8 @@ class XHProf
     }
 
     /**
-     * Configure instance of XHProf with key-valued array, where key must be available public attribute of the class
+     * Configure instance of XHProf with key-valued array, where key must be the name of private attribute of the class
+     * with available public setter method
      * @param array $config key-valued list of params
      */
     public function configure(array $config)
