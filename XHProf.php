@@ -172,7 +172,7 @@ class XHProf
      */
     public function setRunId($runId)
     {
-        if (empty($runNamespace)) {
+        if (empty($runId)) {
             throw new InvalidArgumentException('Identifier cannot be blank');
         }
 
